@@ -1,0 +1,163 @@
+#!/bin/sh
+#
+# ==========================================================================
+#
+# Copyright 2020 Charlotte Koch <dressupgeekout@gmail.com>
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are
+# met:
+#
+# 1. Redistributions of source code must retain the above copyright notice,
+# this list of conditions and the following disclaimer.
+#
+# 2. Redistributions in binary form must reproduce the above copyright
+# notice, this list of conditions and the following disclaimer in the
+# documentation and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+# IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+# THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+# PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+# LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+# NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# ==========================================================================
+#
+# lovefuser
+#
+# This script takes a .love archive and shoves it inside of a copy of
+# love.app, thus creating a "fused" standalone app. It automates the
+# procedure described in https://love2d.org/wiki/Game_Distribution
+#
+# Credit to Filip Molcik for introducing me to the sips(1) command:
+# https://filipmolcik.com/convert-png-to-icns-right-click-converter/
+#
+
+set -e
+
+PROGNAME="$(basename $0)"
+
+original_love_app=""
+cfbundleidentifier=""
+cfbundlename=""
+icon=""
+my_game=""
+
+usage() {
+  echo "${PROGNAME}: usage: ${PROGNAME} [options ...] game.love"
+  echo "  --help                show this message"
+  echo "  --love PATH           location of pristine love.app"
+  echo "  --identifer STRING    desired CFBundleIdentifier (reverse domain name)"
+  echo "  --name STRING         desired CFBundleName"
+  echo "  --icon PATH           path to a large PNG image"
+}
+
+if [ $# -eq 0 ]; then
+  usage
+  exit 1
+fi
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+  --help)
+    usage
+    exit 0
+    ;;
+  --icon)
+    icon="$2"; shift 2;
+    ;;
+  --identifier)
+    cfbundleidentifier="$2"; shift 2;
+    ;;
+  --love)
+    original_love_app="$2"; shift 2;
+    ;;
+  --name)
+    cfbundlename="$2"; shift 2;
+    ;;
+  *)
+    if [ -z "${my_game}" ]; then
+      my_game="$1"; shift 1;
+    else
+      echo "${PROGNAME}: unknown option \"$1\"" 1>&2
+      exit 1
+    fi
+    ;;
+  esac
+done
+
+# Make sure we have enough info, and that it looks reasonable. Note that
+# providing a custom icon is optional, but the rest of the options are
+# mandatory.
+for word in               \
+  "${original_love_app}"  \
+  "${cfbundleidentifier}" \
+  "${cfbundlename}"       \
+  "${my_game}"
+do
+  if [ -z "${word}" ]; then
+    echo "${PROGNAME}: not enough arguments" 1>&2
+    usage
+    exit 1
+  fi
+done
+
+if [ ! -d "${original_love_app}" ]; then
+  echo "${PROGNAME}: ${original_love_app}: not a directory" 1>&2
+  exit 1
+fi
+
+if [ ! -f "${my_game}" ]; then
+  echo "${PROGNAME}: ${my_game}: no such file" 1>&2
+  exit 1
+fi
+
+if [ -n "${icon}" -a ! -f "${icon}" ]; then
+  echo "${PROGNAME}: provided icon \"${icon}\" does not exist" 1>&2
+  exit 1
+fi
+
+new_app_bundle="${cfbundlename}.app"
+
+if [ -d "${new_app_bundle}" ]; then
+  echo "${PROGNAME}: new app bundle \"${new_app_bundle}\ already exists, aborting" 1>&2
+  exit 1
+fi
+
+# OK ready to go!
+echo "Duplicating ${original_love_app}..."
+rsync -ar "${original_love_app}" "${new_app_bundle}"
+
+echo "Adding ${my_game} to resource bundle..."
+cp "${my_game}" "${new_app_bundle}/Contents/Resources/"
+
+echo "Modifying property list.."
+plist="${new_app_bundle}/Contents/Info.plist"
+plutil -replace CFBundleIdentifier -string "${cfbundleidentifier}" "${plist}"
+plutil -replace CFBundleName -string "${cfbundlename}" "${plist}"
+plutil -remove UTExportedTypeDeclarations "${plist}"
+
+if [ -n "${icon}" ]; then
+  echo "Creating new icons..."
+  tempdir="$(mktemp -d)"
+  iconsetdir="${tempdir}/icon.iconset"
+  mkdir -p ${iconsetdir}
+  for n in 16 32 128 256 512; do
+    sips -z ${n} ${n} "${icon}" --out ${iconsetdir}/icon_${n}x${n}.png
+    sips -z $((${n}*2)) $((${n}*2)) "${icon}" --out ${iconsetdir}/icon_${n}x${n}@2x.png
+  done
+  new_icns="${iconsetdir}/icons.icns"
+  iconutil -c icns -o "${new_icns}" ${iconsetdir}
+  # XXX I'm not sure if this actually DTRT
+  cp "${new_icns}" "${new_app_bundle}/Contents/Resources/OS X AppIcon.icns"
+  cp "${new_icns}" "${new_app_bundle}/Contents/Resources/GameIcon.icns"
+  rm -rf "${tempdir}"
+fi
+
+echo "New app bundle is located in: ${new_app_bundle}"

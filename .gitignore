@@ -1,0 +1,5 @@
+*.app
+*.love
+*.swo
+*.swp
+.DS_Store
