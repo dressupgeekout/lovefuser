@@ -30,5 +30,11 @@ lovefuser: usage: lovefuser [options ...] game.love
 ```
 
 
+## License
+
+This script is released under a 2-clause BSD-style license. Read the
+script's header for details.
+
+
 [love]: love2d.org
 [lovewiki]: https://love2d.org/wiki/Game_Distribution
